@@ -21,9 +21,11 @@ const uuid = require('uuid');
 const aboutMessage = constants.aboutMessage;
 const helpMessage = constants.helpMessage;
 const startMessage = constants.startMessage;
-const yesNoKeyboard = constants.yesNoKeyboard;
+const genderSelectKeyboard = constants.genderSelectKeyboard;
+const adminId = constants.adminId;
 const liveToken = tokens.liveToken;
 const testingToken = tokens.testingToken;
+const pairingCode = tokens.pairingCode;
 const shuffleArray = functions.shuffleArray;
 const sleep = functions.sleep;
 
@@ -81,6 +83,14 @@ app.get("/timeoutCheck", (req, res) => {
 		.end();
 });
 
+app.get(`/${pairingCode}`, (req, res) => {
+  assignPairings();
+  
+  res
+    .status(200)
+    .send("Pairings assigned!")
+    .end();
+});
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
@@ -105,25 +115,66 @@ async function updateUser(userId, queryText) {
   await db.ref(`users/${userId}/details`).set(queryText);
 }
 
+async function updateUserGender(userId, genderString) {
+  const gender = genderString == "Male"
+             ? "M"
+             : genderString == "Female"
+               ? "F"
+               : "O";
+  await db.ref(`users/${userId}/gender`).set(gender);
+}
+
 async function assignPairings() {
-  var players = [];
+  var allPlayers = [];
+  var malePlayers = [];
+  var femalePlayers = [];
+  var otherPlayers = [];
   await db.ref('users').once("value", function(snapshot) {
     snapshot.forEach(function(user) {
-      players.push(user.key);
+      if (user.val().gender == "M") malePlayers.push(user.key);
+      else if (user.val().gender == "F") femalePlayers.push(user.key);
+      else otherPlayers.push(user.key);
     });
   });
   
-  players = shuffleArray(players);
-
-  for (let i = 0; i < players.length; i++) {
-    const angel = players[i];
-    const mortal = players[(i + 1) % players.length];
+  malePlayers = shuffleArray(malePlayers);
+  femalePlayers = shuffleArray(femalePlayers);
+  otherPlayers = shuffleArray(otherPlayers);
+  
+  const playersArray = [malePlayers, femalePlayers, otherPlayers];
+  const detailsArray = [];
+  const maxLength = Math.max(malePlayers.length, femalePlayers.length, otherPlayers.length);
+  for (let i = 0; i < maxLength; i++) { // iterate through shuffled arrays
+    for (let j = 0; j < 3; j++) { // iterate through playersArray
+      if (i < playersArray[j].length) allPlayers.push(playersArray[j][i]);
+    }
+  }
+  
+  for (let i = 0; i < allPlayers.length; i++) {
+    const angel = allPlayers[i];
+    const mortal = allPlayers[(i + 1) % allPlayers.length];
 
     // set angel's mortal;
     await db.ref(`users/${angel}/mortal`).set(mortal);
     // set mortal's angel
     await db.ref(`users/${mortal}/angel`).set(angel);
+    // get mortal's details
+    let details;
+    let gender;
+    await db.ref(`users/${mortal}`).once("value", function(snapshot) {
+      details = snapshot.val().details;
+      gender = snapshot.val().gender;
+    });
+    const message = "Hi angel! We have completed our angel-mortal pairings.\n"
+                    + "Here's what your mortal said:\n"
+                    + details
+                    + "\nGender: "
+                    + gender;
+    detailsArray.push(details);
+    bot.sendMessage(angel, message);
   }
+  bot.sendMessage(adminId, detailsArray);
+  
 }
 
 async function getAngel(userId) {
@@ -132,7 +183,7 @@ async function getAngel(userId) {
     angel = snapshot.val();
   });
   return angel;
-
+}
   
 async function getMortal(userId) {
   var mortal;
@@ -140,7 +191,7 @@ async function getMortal(userId) {
     mortal = snapshot.val();
   });
   return mortal;
-}}
+}
 
 ///* main *///
 
@@ -190,30 +241,6 @@ bot.on('message', (msg) => {
 			
 		case "/start":
 			bot.sendMessage(chatId, startMessage);
-			break;
-         
-        // Doesn't work yet
-        /*
-        case "/feedback":
-        case "feedback":
-            dummyResponse = [
-                {
-                    queryResult: {
-                        parameters: {
-                                fields: {
-                                    date: {stringValue: ""},
-                                    "meal-service": {stringValue: ''}
-                        }
-                    },
-                    action: "prompt-station-selection"
-                }
-            }];
-            sendWithoutDialogflow(chatId, dummyResponse);
-            break;
-        */
-            
-		case "test":
-			assignPairings();
 			break;
 
 		default:
@@ -338,23 +365,29 @@ async function processAction(responses, id) {
 		
     case 'update-user-details':
       await updateUser(id, result.queryText);
-      responseText = "Done!";
-      responseOptions = null;
+      responseText = "Great! Please also select your gender from the given options:";
+      responseOptions.reply_markup = genderSelectKeyboard;
       break;
 		
+    case 'update-user-gender':
+      await updateUserGender(id, result.parameters.fields.gender.stringValue);
+      responseText = "All done! The house comm will provide further updates.";
+      responseOptions = null;
+      break;
+    
     case 'send-message-to-angel':
       const angelId = await getAngel(id);
       bot.sendMessage(angelId,
-                      `Message from angel: ${result.queryText}`,
+                      `Message from mortal: ${result.queryText}`,
                       responseOptions);
       responseText = "Message delivered!";
       responseOptions = null;
       break;
       
     case 'send-message-to-mortal':
-      const mortal = await getMortal(id);
+      const mortalId = await getMortal(id);
       bot.sendMessage(mortalId,
-                      `Message from mortal: ${result.queryText}`,
+                      `Message from angel: ${result.queryText}`,
                       responseOptions);
       responseText = "Message delivered!";
       responseOptions = null;
@@ -381,62 +414,7 @@ async function processCallbackQuery(query) {
 	let responseOptions = {parse_mode: "Markdown"};
 	
 	switch (callbackData.split(' ')[0]) {
-		
-		case "menuComponent":
-		
-			callbackData = callbackData.split(' ');
-            const selectedStation = menuFeedbackCache[chatId].menuComponents[0][callbackData[1]];
-            bot.editMessageText(selectedStation, {
-				chat_id: chatId,
-				message_id: messageId,
-				reply_markup: responseOptions
-			});
-			const menuItems = menuFeedbackCache[chatId].menuComponents[1][callbackData[1]];
-            menuFeedbackCache[chatId].menuComponent = menuFeedbackCache[chatId].menuComponents[1][callbackData[1]];
-			const itemsKeyboard = {
-								       inline_keyboard: []
-								   };
-			let i = 0;
-			menuItems.forEach(function(menuItem) {
-				if (menuItem !== "_or_") {
-					itemsKeyboard.inline_keyboard.push([{
-						text: menuItem,
-						callback_data: "menuItem " + i
-					}]);
-				}
-				i++;
-			});
-			
-			// for change in menus
-			itemsKeyboard.inline_keyboard.push([{
-				text: "Others / Change In Menu",
-				callback_data: "menuItem -1"
-			}]);
-			
-			responseOptions.reply_markup = itemsKeyboard;
-			responseText = "Please select the item you would like to give feedback on.";
-			
-			bot.sendMessage(chatId, responseText, responseOptions);
-			break;
-			
-		case "menuItem":
-			// send to Dialogflow in order to create and log context
-			const msg = {chat: {id: chatId},
-						  text: callbackData
-			}
-			awaitAndSendResponse(msg);
-								
-            const selectedItem = callbackData.split(' ')[1] != "-1"
-                                  ? menuFeedbackCache[chatId].menuComponent[callbackData.split(' ')[1]]
-                                  : "Others/ Change in Menu";
-			
-			bot.editMessageText(selectedItem, {
-				chat_id: chatId,
-				message_id: messageId,
-				reply_markup: responseOptions
-			});
-			break;
-			
+	
 		default:
 		
 	}

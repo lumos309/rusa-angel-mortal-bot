@@ -2,9 +2,9 @@
 
 const constants = {
 	aboutMessage: "About this bot:\n"
-				   + "Version: Beta 140819\n"
-				   + "Released: 14 Aug '19\n"
-				   + "Status: First version!\n"
+				   + "Version: Beta 220819\n"
+				   + "Released: 22 Aug '19\n"
+				   + "Status: Ready for use!\n"
 				   + "Created by @lumos309",
 	helpMessage: "Welcome to Rusa Angels & Mortals!\n\n"
 				  + "To register for the game, use the /register command.\n\n"
@@ -19,8 +19,12 @@ const constants = {
 						one_time_keyboard: true,
 						resize_keyboard: true,
 				   },
-	creditsURL: 'https://aces.nus.edu.sg/Prjhml',
-	menuURL: 'http://hg.sg/nus_ohs_admin/adminOHS/backend/script/index.php?controller=pjFront&action=pjActionLoadEventDetail&index=4455&cate=0&dt=',
+  genderSelectKeyboard: {
+						keyboard: [["Male", "Female", "Other / Prefer not to say"]],
+						one_time_keyboard: true,
+						resize_keyboard: true,
+				   },
+	adminId: 385420273
 }
 
 Object.entries(constants).forEach(
