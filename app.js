@@ -21,11 +21,18 @@ const uuid = require('uuid');
 const aboutMessage = constants.aboutMessage;
 const helpMessage = constants.helpMessage;
 const startMessage = constants.startMessage;
+const verifyAdminMessage = constants.verifyAdminMessage;
+const pairingNotFoundMessage = constants.pairingNotFoundMessage;
+const messageSentMessage = constants.messageSentMessage;
+
 const genderSelectKeyboard = constants.genderSelectKeyboard;
+const zoneSelectKeyboard = constants.zoneSelectKeyboard;
 const adminId = constants.adminId;
 const liveToken = tokens.liveToken;
 const testingToken = tokens.testingToken;
-const pairingCode = tokens.pairingCode;
+const zoneAPassword = tokens.zoneAPassword;
+const zoneBPassword = tokens.zoneBPassword;
+const zoneCPassword = tokens.zoneCPassword;
 const shuffleArray = functions.shuffleArray;
 const sleep = functions.sleep;
 
@@ -83,14 +90,14 @@ app.get("/timeoutCheck", (req, res) => {
 		.end();
 });
 
-app.get(`/${pairingCode}`, (req, res) => {
-  assignPairings();
+// app.get(`/${pairingCode}`, (req, res) => {
+//   assignPairings();
   
-  res
-    .status(200)
-    .send("Pairings assigned!")
-    .end();
-});
+//   res
+//     .status(200)
+//     .send("Pairings assigned!")
+//     .end();
+// });
 
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
@@ -111,45 +118,49 @@ const db = admin.database();
 const userRef = db.ref("users");
 
 // database access functions
-async function updateUser(userId, queryText) {
-  await db.ref(`users/${userId}/details`).set(queryText);
+async function updateUser(userId, gender, zone, details) {
+	// set zone-specific entry for pairings
+	await db.ref(`zones/${zone}/${userId}`).set({details: details, gender: gender});
+	// set global entry for sending messages
+  await db.ref(`users/${userId}`).set({details: details, gender: gender});
 }
 
-async function updateUserGender(userId, genderString) {
-  const gender = genderString == "Male"
-             ? "M"
-             : genderString == "Female"
-               ? "F"
-               : "O";
-  await db.ref(`users/${userId}/gender`).set(gender);
-}
-
-async function assignPairings() {
-  var allPlayers = [];
-  var malePlayers = [];
-  var femalePlayers = [];
-  var otherPlayers = [];
-  await db.ref('users').once("value", function(snapshot) {
-    snapshot.forEach(function(user) {
-      if (user.val().gender == "M") malePlayers.push(user.key);
-      else if (user.val().gender == "F") femalePlayers.push(user.key);
-      else otherPlayers.push(user.key);
-    });
-  });
-  
-  malePlayers = shuffleArray(malePlayers);
-  femalePlayers = shuffleArray(femalePlayers);
-  otherPlayers = shuffleArray(otherPlayers);
-  
-  const playersArray = [malePlayers, femalePlayers, otherPlayers];
-  const detailsArray = [];
-  const maxLength = Math.max(malePlayers.length, femalePlayers.length, otherPlayers.length);
-  for (let i = 0; i < maxLength; i++) { // iterate through shuffled arrays
-    for (let j = 0; j < 3; j++) { // iterate through playersArray
-      if (i < playersArray[j].length) allPlayers.push(playersArray[j][i]);
-    }
-  }
-  
+async function assignPairings(zone, adminChatId, alternateGenders = true) {
+	bot.sendMessage(adminChatId, `Running pairing algorithm for zone ${zone}...`);
+	var allPlayers = [];
+	if (alternateGenders) {
+		var malePlayers = [];
+		var femalePlayers = [];
+		var otherPlayers = [];
+		await db.ref(`zones/${zone}`).once("value", function(snapshot) {
+			snapshot.forEach(function(user) {
+				if (user.val().gender == "M") malePlayers.push(user.key);
+				else if (user.val().gender == "F") femalePlayers.push(user.key);
+				else otherPlayers.push(user.key);
+			});
+		});
+		
+		malePlayers = shuffleArray(malePlayers);
+		femalePlayers = shuffleArray(femalePlayers);
+		otherPlayers = shuffleArray(otherPlayers);
+		
+		const playersArray = [malePlayers, femalePlayers, otherPlayers];
+		const maxLength = Math.max(malePlayers.length, femalePlayers.length, otherPlayers.length);
+		for (let i = 0; i < maxLength; i++) { // iterate through shuffled arrays
+			for (let j = 0; j < 3; j++) { // iterate through playersArray
+				if (i < playersArray[j].length) allPlayers.push(playersArray[j][i]);
+			}
+		}
+	} else {
+		await db.ref(`zones/${zone}`).once("value", function(snapshot) {
+			snapshot.forEach(function(user) {
+				allPlayers.push(user.key);
+			});
+		});
+		allPlayers = shuffleArray(allPlayers);
+	}
+	
+	let pairingResults = "ADMIN: Here are the pairing results:\n\n";
   for (let i = 0; i < allPlayers.length; i++) {
     const angel = allPlayers[i];
     const mortal = allPlayers[(i + 1) % allPlayers.length];
@@ -165,15 +176,16 @@ async function assignPairings() {
       details = snapshot.val().details;
       gender = snapshot.val().gender;
     });
-    const message = "Hi angel! We have completed our angel-mortal pairings.\n"
+    const message = "Hi angel! We have completed our angel-mortal pairings.\n\n"
                     + "Here's what your mortal said:\n"
-                    + details
-                    + "\nGender: "
-                    + gender;
-    detailsArray.push(details);
+                    + `"${details}"\n`
+										+ `Gender: ${gender}\n\n`
+										+ "You can now message them! For example: /mortal Hello mortal!\n\n"
+										+ "Have fun!";
+    pairingResults += details + "\n\n";
     bot.sendMessage(angel, message);
-  }
-  bot.sendMessage(adminId, detailsArray);
+	}
+  bot.sendMessage(adminChatId, pairingResults);
   
 }
 
@@ -193,6 +205,26 @@ async function getMortal(userId) {
   return mortal;
 }
 
+async function getPlayerGender(userId) {
+	var gender;
+	await db.ref(`users/${userId}/gender`).once("value", function(snapshot) {
+    gender = snapshot.val();
+	});
+	return gender;
+}
+
+async function unregisterUser(userId) {
+	await db.ref(`users/${userId}`).set(null);
+	await db.ref(`zones/A/${userId}`).set(null);
+	await db.ref(`zones/B/${userId}`).set(null);
+	await db.ref(`zones/C/${userId}`).set(null);
+	bot.sendMessage(userId, "You have been successfully unregistered from the game.");
+}
+
+async function test(id) {
+	bot.sendMessage(id, "👨‍🦲*MORTAL*\n💬: " + "hi!!!", {parse_mode: "Markdown"});
+}
+
 ///* main *///
 
 const activeSessions = {};
@@ -202,9 +234,9 @@ const menuFeedbackCache = {};
 
 // replace the value below with the Telegram token you receive from @BotFather
 // live
-// const token = liveToken;
+const token = liveToken;
 // testing
-const token = testingToken;
+// const token = testingToken;
 
 // Create a bot that uses 'polling' to fetch new updates
 let bot = new telegramBot(token, {polling: true});
@@ -214,8 +246,6 @@ bot.onText(/\/echo (.+)/, (msg, match) => {
   // 'msg' is the received Message from Telegram
   // 'match' is the result of executing the regexp above on the text content
   // of the message
-	console.log(msg.chat.id);
-	console.log(msg.chat);
   const chatId = msg.chat.id;
   const resp = match[1]; // the captured "whatever"
 
@@ -229,23 +259,55 @@ bot.on('message', (msg) => {
     const chatId = msg.chat.id;
     let dummyResponse; // to pass to processAction if Dialogflow is bypassed
 	
-	switch(msg.text) {
-		
-		case "/about":
-			bot.sendMessage(chatId, aboutMessage);
-			break;
-		
-		case "/help":
-			bot.sendMessage(chatId, helpMessage);
-			break;
-			
-		case "/start":
-			bot.sendMessage(chatId, startMessage);
-			break;
+	if (msg.text.slice(0, 7) == "/angel " && msg.text.slice(7) != '') {
+		sendMessageToAngel(chatId, msg.text.slice(7));
+	} else if (msg.text.slice(0, 8) == "/mortal " && msg.text.slice(8) != '') {
+		sendMessageToMortal(chatId, msg.text.slice(8));
+	} else {	
 
-		default:
-			awaitAndSendResponse(msg).catch(err => console.error(`Error awaitAndSendResponse: ${err}`));
-	
+		switch(msg.text) {
+			
+			case "/about":
+				bot.sendMessage(chatId, aboutMessage);
+				break;
+			
+			case "/help":
+				bot.sendMessage(chatId, helpMessage);
+				break;
+				
+			case "/start":
+				bot.sendMessage(chatId, startMessage);
+				break;
+			
+			case "/admin":
+				bot.sendMessage(chatId, verifyAdminMessage);
+				break;
+
+			case `${zoneAPassword} A`:
+				assignPairings("A", chatId);
+				break;
+			
+			case `${zoneBPassword} B`:
+				assignPairings("B", chatId, false);
+				break;
+
+			case `${zoneCPassword} C`:
+				assignPairings("C", chatId);
+				break;
+
+			case "/unregister":
+				unregisterUser(chatId);
+				break;
+
+			// case "test":
+			// case "/test":
+			// 	test(chatId);
+			// 	break;
+
+			default:
+				awaitAndSendResponse(msg).catch(err => console.error(`Error awaitAndSendResponse: ${err}`));
+		
+		}
 	}
 });
 
@@ -356,40 +418,49 @@ Returns an object in the following form:
 async function processAction(responses, id) {
 	let result = responses[0].queryResult;
 	const inputParams = result.parameters.fields;
-	let responseText = '';
+	let responseText = result.fulfillmentText;
 	let sendingStyle = null;
 	let responseOptions = {parse_mode: "Markdown"};
 	let dateNow = new Date(Date.now());
 	
 	switch (result.action) {
 		
-    case 'update-user-details':
-      await updateUser(id, result.queryText);
-      responseText = "Great! Please also select your gender from the given options:";
+    case 'get-gender':
       responseOptions.reply_markup = genderSelectKeyboard;
       break;
 		
-    case 'update-user-gender':
-      await updateUserGender(id, result.parameters.fields.gender.stringValue);
-      responseText = "All done! The house comm will provide further updates.";
-      responseOptions = null;
-      break;
-    
+    case 'get-zone':
+			responseOptions.reply_markup = zoneSelectKeyboard;
+	  	break;
+	
+		case 'update-user':
+			const contextParameters = result.outputContexts[0].parameters.fields;
+			const gender = contextParameters["gender"].stringValue;
+			const zone = contextParameters["zone"].stringValue;
+			const details = result.queryText;
+			await updateUser(id, gender, zone, details);
+			console.log("Registered: " + gender + ' / Zone ' + zone + ' / ' + details);
+			responseText = result.fulfillmentText;
+			responseOptions = null;
+			break;
+
     case 'send-message-to-angel':
       const angelId = await getAngel(id);
-      bot.sendMessage(angelId,
-                      `Message from mortal: ${result.queryText}`,
-                      responseOptions);
-      responseText = "Message delivered!";
+			if (!angelId) responseText = pairingNotFoundMessage;
+			else {
+				bot.sendMessage(angelId, "👨‍🦲 *MORTAL*\n💬: " + result.queryText, {parse_mode: "Markdown"});
+				responseText = messageSentMessage;
+			}
       responseOptions = null;
       break;
-      
+
     case 'send-message-to-mortal':
-      const mortalId = await getMortal(id);
-      bot.sendMessage(mortalId,
-                      `Message from angel: ${result.queryText}`,
-                      responseOptions);
-      responseText = "Message delivered!";
+			const mortalId = await getMortal(id);
+			if (!mortalId) responseText = pairingNotFoundMessage;
+			else {
+				bot.sendMessage(mortalId, "👼 *ANGEL*\n💬: " + result.queryText, {parse_mode: "Markdown"});
+				responseText = messageSentMessage;
+			}
       responseOptions = null;
       break;
       
@@ -401,6 +472,24 @@ async function processAction(responses, id) {
 	return {message: responseText,
 			options: responseOptions,
 			sendingStyle: sendingStyle}
+}
+
+async function sendMessageToAngel(mortalId, message) {
+	const angelId = await getAngel(mortalId);
+	if (!angelId) bot.sendMessage(mortalId, pairingNotFoundMessage);
+	else {
+		bot.sendMessage(angelId, "👨‍🦲 *MORTAL*\n💬: " + message, {parse_mode: "Markdown"});
+		bot.sendMessage(mortalId, messageSentMessage);
+	}
+}
+
+async function sendMessageToMortal(angelId, message) {
+	const mortalId = await getMortal(angelId);
+	if (!mortalId) bot.sendMessage(angelId, pairingNotFoundMessage);
+	else {
+		bot.sendMessage(mortalId, "👼 *ANGEL*\n💬: " + message, {parse_mode: "Markdown"});
+		bot.sendMessage(angelId, messageSentMessage);
+	}
 }
 
 async function processCallbackQuery(query) {
