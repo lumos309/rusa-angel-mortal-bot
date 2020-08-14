@@ -2,9 +2,6 @@ cron:
 - description: "ping to keep bot alive"
   url: /
   schedule: every 2 mins
-- description: "ping to clear cache for inactive chats"
-  url: /timeoutCheck
-  schedule: every 1 hours
 - description: "restart bot module polling"
   url: /restart
   schedule: every 10 mins

@@ -30,6 +30,7 @@ const zoneSelectKeyboard = constants.zoneSelectKeyboard;
 const adminId = constants.adminId;
 const liveToken = tokens.liveToken;
 const testingToken = tokens.testingToken;
+const rvrcAngelMortalToken = tokens.rvrcAngelMortalToken;
 const zoneAPassword = tokens.zoneAPassword;
 const zoneBPassword = tokens.zoneBPassword;
 const zoneCPassword = tokens.zoneCPassword;
@@ -70,25 +71,25 @@ app.get('/restart', (req, res) => {
 
 
 // cron job - ping every 60 mins to clear sessions >=20 mins old
-app.get("/timeoutCheck", (req, res) => {
-	let sessionDeleteCount = 0;
+// app.get("/timeoutCheck", (req, res) => {
+// 	let sessionDeleteCount = 0;
 	
-	for (const i of Object.keys(activeSessions)) {
-		if (checkTimeout(activeSessions[i])) {
-			delete activeSessions[i];
-			sessionDeleteCount += 1;
-		}
-	}
+// 	for (const i of Object.keys(activeSessions)) {
+// 		if (checkTimeout(activeSessions[i])) {
+// 			delete activeSessions[i];
+// 			sessionDeleteCount += 1;
+// 		}
+// 	}
 
-	if (sessionDeleteCount > 0) {
-		console.log(`Deleted ${sessionDeleteCount} sessions.`);
-	}
+// 	if (sessionDeleteCount > 0) {
+// 		console.log(`Deleted ${sessionDeleteCount} sessions.`);
+// 	}
 	
-	res
-		.status(200)
-		.send(`Timeoutcheck done.`)
-		.end();
-});
+// 	res
+// 		.status(200)
+// 		.send(`Timeoutcheck done.`)
+// 		.end();
+// });
 
 // app.get(`/${pairingCode}`, (req, res) => {
 //   assignPairings();
@@ -123,6 +124,26 @@ async function updateUser(userId, gender, zone, details) {
 	await db.ref(`zones/${zone}/${userId}`).set({details: details, gender: gender});
 	// set global entry for sending messages
   await db.ref(`users/${userId}`).set({details: details, gender: gender});
+}
+
+async function listUsers(zone, adminChatId) {
+	bot.sendMessage(adminChatId, `ADMIN: Here are the registered users for zone ${zone}, in no particular order:`);
+	await db.ref(`zones/${zone}`).once("value", function(snapshot) {
+		let currCount = 0;
+		let totalCount = 0;
+		let msg = "";
+		snapshot.forEach(function(user) {
+			currCount++;
+			totalCount++;
+			msg += `"${user.val().details}"\n\n`;
+			if (currCount == 40) {
+				bot.sendMessage(adminChatId, msg);
+				currCount = 0;
+				msg = "";
+			}
+		})
+		if (currCount != 0) bot.sendMessage(adminChatId, msg);
+	})
 }
 
 async function assignPairings(zone, adminChatId, alternateGenders = true) {
@@ -160,12 +181,12 @@ async function assignPairings(zone, adminChatId, alternateGenders = true) {
 		allPlayers = shuffleArray(allPlayers);
 	}
 	
-	let pairingResults = "ADMIN: Here are the pairing results:\n\n";
+	bot.sendMessage(adminChatId, "ADMIN: Here are the pairing results:");
   for (let i = 0; i < allPlayers.length; i++) {
     const angel = allPlayers[i];
     const mortal = allPlayers[(i + 1) % allPlayers.length];
 
-    // set angel's mortal;
+    // set angel's mortal
     await db.ref(`users/${angel}/mortal`).set(mortal);
     // set mortal's angel
     await db.ref(`users/${mortal}/angel`).set(angel);
@@ -182,10 +203,9 @@ async function assignPairings(zone, adminChatId, alternateGenders = true) {
 										+ `Gender: ${gender}\n\n`
 										+ "You can now message them! For example: /mortal Hello mortal!\n\n"
 										+ "Have fun!";
-    pairingResults += details + "\n\n";
     bot.sendMessage(angel, message);
+		bot.sendMessage(adminChatId, details);
 	}
-  bot.sendMessage(adminChatId, pairingResults);
   
 }
 
@@ -234,7 +254,8 @@ const menuFeedbackCache = {};
 
 // replace the value below with the Telegram token you receive from @BotFather
 // live
-const token = liveToken;
+// const token = liveToken;
+const token = rvrcAngelMortalToken;
 // testing
 // const token = testingToken;
 
@@ -293,6 +314,18 @@ bot.on('message', (msg) => {
 
 			case `${zoneCPassword} C`:
 				assignPairings("C", chatId);
+				break;
+
+			case `listUsers ${zoneAPassword}`:
+				listUsers("A", chatId);
+				break;
+
+			case `listUsers ${zoneBPassword}`:
+				listUsers("B", chatId);
+				break;
+
+			case `listUsers ${zoneCPassword}`:
+				listUsers("C", chatId);
 				break;
 
 			case "/unregister":
