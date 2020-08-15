@@ -123,7 +123,9 @@ async function updateUser(userId, gender, zone, details) {
 	// set zone-specific entry for pairings
 	await db.ref(`zones/${zone}/${userId}`).set({details: details, gender: gender});
 	// set global entry for sending messages
-  await db.ref(`users/${userId}`).set({details: details, gender: gender});
+	// set attributes separately to avoid overriding any existing data at this entry
+	await db.ref(`users/${userId}/details`).set(details);
+	await db.ref(`users/${userId}/gender`).set(gender);
 }
 
 async function listUsers(zone, adminChatId) {

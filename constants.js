@@ -2,9 +2,9 @@
 
 const constants = {
 	aboutMessage: "About this bot:\n"
-		+ "Version: 2.2\n"
+		+ "Version: 2.2.1\n"
 		+ "Released: 15 Aug '20\n"
-		+ "Status: Added and fixed admin commands\n"
+		+ "Status: Prevent register command from deleting existing data\n"
 		+ "Created by @lumos309",
 	helpMessage: "Welcome to RVRC Angels & Mortals 2020!\n\n"
 		+ "To join the game, use the /register command.\n\n"
