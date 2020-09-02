@@ -24,6 +24,9 @@ const startMessage = constants.startMessage;
 const verifyAdminMessage = constants.verifyAdminMessage;
 const pairingNotFoundMessage = constants.pairingNotFoundMessage;
 const messageSentMessage = constants.messageSentMessage;
+const accessAngelSuccessMessage = constants.accessAngelSuccessMessage;
+const accessMortalSuccessMessage = constants.accessMortalSuccessMessage;
+const adminPairingsRetrievedMessage = constants.adminPairingsRetrievedMessage;
 
 const genderSelectKeyboard = constants.genderSelectKeyboard;
 const zoneSelectKeyboard = constants.zoneSelectKeyboard;
@@ -151,10 +154,10 @@ async function listUsers(zone, adminChatId) {
 async function assignPairings(zone, adminChatId, alternateGenders = true) {
 	bot.sendMessage(adminChatId, `Running pairing algorithm for zone ${zone}...`);
 	var allPlayers = [];
+	var malePlayers = [];
+	var femalePlayers = [];
+	var otherPlayers = [];
 	if (alternateGenders) {
-		var malePlayers = [];
-		var femalePlayers = [];
-		var otherPlayers = [];
 		await db.ref(`zones/${zone}`).once("value", function(snapshot) {
 			snapshot.forEach(function(user) {
 				if (user.val().gender == "M") malePlayers.push(user.key);
@@ -167,20 +170,39 @@ async function assignPairings(zone, adminChatId, alternateGenders = true) {
 		femalePlayers = shuffleArray(femalePlayers);
 		otherPlayers = shuffleArray(otherPlayers);
 		
-		const playersArray = [malePlayers, femalePlayers, otherPlayers];
+		const playersArrays = [malePlayers, femalePlayers, otherPlayers];
 		const maxLength = Math.max(malePlayers.length, femalePlayers.length, otherPlayers.length);
 		for (let i = 0; i < maxLength; i++) { // iterate through shuffled arrays
-			for (let j = 0; j < 3; j++) { // iterate through playersArray
-				if (i < playersArray[j].length) allPlayers.push(playersArray[j][i]);
+			for (let j = 0; j < 3; j++) { // iterate through playersArrays
+				if (i < playersArrays[j].length) allPlayers.push(playersArrays[j][i]);
 			}
 		}
 	} else {
+		var femalePairingPlayers = []; // players requesting only female angels and mortals
 		await db.ref(`zones/${zone}`).once("value", function(snapshot) {
 			snapshot.forEach(function(user) {
-				allPlayers.push(user.key);
+				if (user.val().gender == "M") malePlayers.push(user.key);
+				else if (user.val().gender == "F") {
+					if (user.val().femaleOnly) femalePairingPlayers.push(user.key);
+					else femalePlayers.push(user.key);
+				}
+				else otherPlayers.push(user.key);
 			});
 		});
-		allPlayers = shuffleArray(allPlayers);
+
+		// handle female pairing players first
+		if (femalePairingPlayers.length > 0) {
+			femalePlayers = shuffleArray(femalePlayers);
+			femalePairingPlayers = shuffleArray(femalePairingPlayers);
+			allPlayers.push(femalePlayers.pop());
+			allPlayers = allPlayers.concat(femalePairingPlayers);
+			allPlayers.push(femalePlayers.pop());
+		}
+
+		// handle rest of players
+		let restOfPlayers = shuffleArray(femalePlayers.concat(malePlayers).concat(otherPlayers));
+
+		allPlayers = allPlayers.concat(restOfPlayers);
 	}
 	
 	bot.sendMessage(adminChatId, "ADMIN: Here are the pairing results:");
@@ -213,17 +235,25 @@ async function assignPairings(zone, adminChatId, alternateGenders = true) {
 
 async function getAngel(userId) {
   var angel;
-  await db.ref(`users/${userId}/angel`).once("value", function(snapshot) {
-    angel = snapshot.val();
-  });
+  await db.ref(`users/${userId}`).once("value", function(snapshot) {
+		angel = snapshot.val().angel;
+		if (angel && !snapshot.val().hasAccessedAngelOnce) {
+			db.ref(`users/${userId}/hasAccessedAngelOnce`).set(true);
+			bot.sendMessage(userId, accessAngelSuccessMessage, {parse_mode: "Markdown"});
+		}
+	});
   return angel;
 }
   
 async function getMortal(userId) {
   var mortal;
-  await db.ref(`users/${userId}/mortal`).once("value", function(snapshot) {
-    mortal = snapshot.val();
-  });
+  await db.ref(`users/${userId}`).once("value", function(snapshot) {
+		mortal = snapshot.val().mortal;
+		if (mortal && !snapshot.val().hasAccessedMortalOnce) {
+			db.ref(`users/${userId}/hasAccessedMortalOnce`).set(true);
+			bot.sendMessage(userId, accessMortalSuccessMessage, {parse_mode: "Markdown"});
+		}
+	});
   return mortal;
 }
 
@@ -243,8 +273,48 @@ async function unregisterUser(userId) {
 	bot.sendMessage(userId, "You have been successfully unregistered from the game.");
 }
 
+async function getPairings(zone, adminChatId) {
+	bot.sendMessage(adminChatId, `Here are the pairings for zone ${zone}: \n\n(This may take a while...)`)
+
+	// get arbitrary user from zone
+	let startingKey = '';
+	await db.ref(`zones/${zone}`).limitToFirst(1).once("value", function(snapshot) {
+		snapshot.forEach(function(user) {
+			startingKey = user.key;
+		})
+	})
+
+	// cycle through users until looped back to starting user
+	let currKey = startingKey;
+	let msg = "";
+	let count = 0;
+	let globalCount = 1;
+	do {
+		// possible to fetch entire section in one snapshot and query from there?
+		await db.ref(`users/${currKey}`).once("value", function(snapshot) {
+			msg += globalCount + '. ' + snapshot.val().details + "\n\n";
+			count++;
+			globalCount++;
+			currKey = snapshot.val().mortal;
+		})
+		if (count == 30) {
+			bot.sendMessage(adminChatId, msg);
+			msg = '';
+			count = 0;
+		}
+	} while (currKey != startingKey)
+	if (count != 0) await bot.sendMessage(adminChatId, msg);
+
+	bot.sendMessage(adminChatId, adminPairingsRetrievedMessage);
+}
+
 async function test(id) {
-	bot.sendMessage(id, "👨‍🦲*MORTAL*\n💬: " + "hi!!!", {parse_mode: "Markdown"});
+	await db.ref(`users/500326343`).once("value", function(snapshot) {
+		if (snapshot.val().femaleOnly) 
+		console.log('yes');
+		else console.log("no");
+	});
+	//bot.sendMessage(id, "👨‍🦲*MORTAL*\n💬: " + "hi!!!", {parse_mode: "Markdown"});
 }
 
 ///* main *///
@@ -282,10 +352,18 @@ bot.on('message', (msg) => {
     const chatId = msg.chat.id;
     let dummyResponse; // to pass to processAction if Dialogflow is bypassed
 	
-	if (msg.text.slice(0, 7) == "/angel " && msg.text.slice(7) != '') {
+	if (msg.text.slice(0, 7).toLowerCase() == "/angel " && msg.text.slice(7) != '') {
+		console.log(chatId + ": " + msg.text);
 		sendMessageToAngel(chatId, msg.text.slice(7));
-	} else if (msg.text.slice(0, 8) == "/mortal " && msg.text.slice(8) != '') {
+	} else if (msg.text.slice(0, 3).toLowerCase() == "/a " && msg.text.slice(3) != '') {
+		console.log(chatId + ": " + msg.text);
+		sendMessageToAngel(chatId, msg.text.slice(3));
+	} else if (msg.text.slice(0, 8).toLowerCase() == "/mortal " && msg.text.slice(8) != '') {
+		console.log(chatId + ": " + msg.text);
 		sendMessageToMortal(chatId, msg.text.slice(8));
+	} else if (msg.text.slice(0, 3).toLowerCase() == "/m " && msg.text.slice(3) != '') {
+		console.log(chatId + ": " + msg.text);
+		sendMessageToMortal(chatId, msg.text.slice(3));
 	} else {	
 
 		switch(msg.text) {
@@ -330,13 +408,25 @@ bot.on('message', (msg) => {
 				listUsers("C", chatId);
 				break;
 
+			case `getPairings ${zoneAPassword}`:
+				getPairings("A", chatId);
+				break;
+
+			case `getPairings ${zoneBPassword}`:
+				getPairings("B", chatId);
+				break;
+
+			case `getPairings ${zoneCPassword}`:
+				getPairings("C", chatId);
+				break;
+			
 			case "/unregister":
 				unregisterUser(chatId);
 				break;
 
 			// case "test":
 			// case "/test":
-			// 	test(chatId);
+			// 	getPairings(chatId, "B");
 			// 	break;
 
 			default:
@@ -513,8 +603,20 @@ async function sendMessageToAngel(mortalId, message) {
 	const angelId = await getAngel(mortalId);
 	if (!angelId) bot.sendMessage(mortalId, pairingNotFoundMessage);
 	else {
-		bot.sendMessage(angelId, "👨‍🦲 *MORTAL*\n💬: " + message, {parse_mode: "Markdown"});
-		bot.sendMessage(mortalId, messageSentMessage);
+		try {
+			await bot.sendMessage(angelId, "👨‍🦲 *MORTAL*\n💬: " + message, {parse_mode: "Markdown"});
+			//bot.sendMessage(mortalId, messageSentMessage);
+		} catch (e) {
+			try {
+				console.log("Error. Trying HTML parse mode...");
+				await bot.sendMessage(angelId, "👨‍🦲 *MORTAL*\n💬: " + message, {parse_mode: "HTML"});
+				//bot.sendMessage(mortalId, messageSentMessage);		
+			} catch (e) {
+				console.log("Error.");
+				bot.sendMessage(mortalId, "Error sending message! :(\n\nPlease try again.");
+			}
+		}
+		
 	}
 }
 
@@ -522,8 +624,19 @@ async function sendMessageToMortal(angelId, message) {
 	const mortalId = await getMortal(angelId);
 	if (!mortalId) bot.sendMessage(angelId, pairingNotFoundMessage);
 	else {
-		bot.sendMessage(mortalId, "👼 *ANGEL*\n💬: " + message, {parse_mode: "Markdown"});
-		bot.sendMessage(angelId, messageSentMessage);
+		try {
+			await bot.sendMessage(mortalId, "👼 *ANGEL*\n💬: " + message, {parse_mode: "Markdown"});
+			//bot.sendMessage(angelId, messageSentMessage);
+		} catch (e) {
+			try {
+				console.log("Error. Trying HTML parse mode...");
+				await bot.sendMessage(mortalId, "👼 *ANGEL*\n💬: " + message, {parse_mode: "HTML"});
+				//bot.sendMessage(angelId, messageSentMessage);
+			} catch (e) {
+				console.log("Error.");
+				bot.sendMessage(angelId, "Error sending message! :(\n\nPlease try again.")
+			}
+		}		
 	}
 }
 
