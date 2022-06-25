@@ -25,7 +25,7 @@
     "dialogflow": "^0.7.0",
     "express": "^4.16.4",
     "firebase-admin": "^6.4.0",
-    "node-fetch": "^2.3.0",
+    "node-fetch": "^2.6.7",
     "node-html-parser": "^1.1.11",
     "node-telegram-bot-api": "^0.30.0",
     "request": "^2.88.0",
